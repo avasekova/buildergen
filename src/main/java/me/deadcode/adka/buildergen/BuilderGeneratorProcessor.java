@@ -2,6 +2,7 @@ package me.deadcode.adka.buildergen;
 
 import me.deadcode.adka.buildergen.annotation.GenerateBuilder;
 import org.jboss.forge.roaster.Roaster;
+import org.jboss.forge.roaster.model.Type;
 import org.jboss.forge.roaster.model.source.FieldSource;
 import org.jboss.forge.roaster.model.source.JavaClassSource;
 
@@ -14,6 +15,7 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -82,7 +84,7 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                             abstractBuilderClassTemplate(javaClass.getName(), extendsAnnotatedClass));
 
                     //for each attribute of the parent class, add a setter in this form:
-                    for (FieldSource attribute : javaClass.getFields()) {
+                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
                         String setterName = "set" + capitalize(attribute.getName()) + "(" + attribute.getName() + ")";
 
                         abstractBuilder.addMethod()
@@ -90,8 +92,21 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                 .setName(attribute.getName())
                                 .setReturnType("B")
                                 .setBody("getObj()." + setterName + ";" + System.lineSeparator() +
-                                         "return getThisBuilder();")
+                                        "return getThisBuilder();")
                                 .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
+                    }
+
+                    //for each attribute that is a Collection, add also a method for adding individual elements:
+                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
+                        if (isCollection(attribute.getType())) {
+                            abstractBuilder.addMethod()
+                                    .setPublic()
+                                    .setName("addTo" + capitalize(attribute.getName()))
+                                    .setReturnType("B")
+                                    .setBody("getObj().get" + capitalize(attribute.getName()) + "().add(" + attribute.getName() + "Element" + ");" +
+                                            System.lineSeparator() + "return getThisBuilder();")
+                                    .addParameter(getElementType(attribute.getType()), attribute.getName() + "Element");
+                        }
                     }
 
                     //and these exact three methods (if not inherited from parent):
@@ -174,7 +189,6 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
         return true;
     }
 
-
     private String capitalize(String attributeName) {
         return attributeName.substring(0,1).toUpperCase() + (attributeName.length() == 1 ? "" : attributeName.substring(1));
     }
@@ -197,6 +211,20 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
 
     private String abstractBuilderClassTemplate(String baseClass, String extendsAnnotatedClass) {
         return String.format(ABSTRACT_BUILDER_CLASS_TEMPLATE, baseClass, baseClass, baseClass, extendsAnnotatedClass);
+    }
+
+    private boolean isCollection(Type<JavaClassSource> type) {
+        try {
+            Class c = Class.forName(type.getQualifiedName());
+            return Collection.class.isAssignableFrom(c);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    private String getElementType(Type<JavaClassSource> type) {
+        return type.getTypeArguments().isEmpty() ? Object.class.getCanonicalName()
+                : type.getTypeArguments().get(0).getQualifiedNameWithGenerics();
     }
 
 }

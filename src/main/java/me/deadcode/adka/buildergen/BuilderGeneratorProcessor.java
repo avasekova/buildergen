@@ -24,6 +24,8 @@ import java.util.stream.Collectors;
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class BuilderGeneratorProcessor extends AbstractProcessor {
 
+    //TODO refactor, duplicate code etc.
+
     private static final String CONCRETE_BUILDER_NAME = "%sBuilder";
     private static final String ABSTRACT_BUILDER_NAME = "Abstract" + CONCRETE_BUILDER_NAME;
     private static final String EXTENDS_PARENT_CLASS_ABSTRACT_BUILDER = " extends " + ABSTRACT_BUILDER_NAME + "<T, B>";
@@ -33,9 +35,12 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
     private static final String ABSTRACT_BUILDER_CLASS_TEMPLATE = "public static abstract class " + ABSTRACT_BUILDER_NAME +
             "<T extends %s, B extends " + ABSTRACT_BUILDER_NAME + "<T, B>>%s { }";
 
+    public static final String NOTE_GENERATED_CODE = "Note: generated code. All changes will be undone on the next build " +
+            "as long as the enclosing class is annotated with @GenerateBuilder.";
 
     private static final String CLASSES_PATH_PREFIX = "src" + File.separator + "main" + File.separator + "java" + File.separator;
     private static final String DOT_JAVA = ".java";
+
     private Messager messager;
 
     private boolean firstRound = true;
@@ -120,6 +125,73 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                         }
                     }
 
+                    //generate methods to set all values from an object of the type being built (or its [sub|super]type)
+                    String objectOfThisClass = decapitalize(javaClass.getName());
+                    StringBuilder from = new StringBuilder();
+                    if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
+                        from.append("super.from(object);").append(System.lineSeparator()).append(System.lineSeparator());
+                    }
+                    from.append("if (object instanceof ").append(javaClass.getName()).append(") {").append(System.lineSeparator())
+                            .append(javaClass.getName()).append(" ").append(objectOfThisClass).append(" = (")
+                            .append(javaClass.getName()).append(") object;").append(System.lineSeparator());
+                    //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
+
+                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) { //TODO refactor, use one for loop?
+                        //set all attributes individually
+                        String getterName = (attribute.getType().getSimpleName().toLowerCase().equals("boolean") ? "is" : "get") +
+                                capitalize(attribute.getName()) + "()";
+
+                        from.append("getObj().set").append(capitalize(attribute.getName())).append("(")
+                                .append(objectOfThisClass).append(".").append(getterName).append(");")
+                                .append(System.lineSeparator());
+                    }
+                    from.append("}").append(System.lineSeparator());
+                    from.append(System.lineSeparator()).append("return getThisBuilder();");
+                    abstractBuilder.addMethod()
+                            .setPublic()
+                            .setName("from")
+                            .setReturnType("B")
+                            .setBody(from.toString())
+                            .addParameter(Object.class, "object");
+
+                    //a very similar method, but ignoring null values  TODO de-duplicate
+                    StringBuilder fromIgnoreNull = new StringBuilder();
+                    if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
+                        fromIgnoreNull.append("super.fromIgnoreNull(object);").append(System.lineSeparator()).append(System.lineSeparator());
+                    }
+                    fromIgnoreNull.append("if (object instanceof ").append(javaClass.getName()).append(") {").append(System.lineSeparator())
+                            .append(javaClass.getName()).append(" ").append(objectOfThisClass).append(" = (")
+                            .append(javaClass.getName()).append(") object;").append(System.lineSeparator());
+                    //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
+
+                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
+                        //set all attributes individually
+                        String getterName = (attribute.getType().getSimpleName().toLowerCase().equals("boolean") ? "is" : "get") +
+                                capitalize(attribute.getName()) + "()";
+
+                        if (! attribute.getType().isPrimitive()) {
+                            fromIgnoreNull.append("if (").append(objectOfThisClass).append(".").append(getterName)
+                                    .append(" != null) {").append(System.lineSeparator());
+                        }
+
+                        fromIgnoreNull.append("getObj().set").append(capitalize(attribute.getName())).append("(")
+                                .append(objectOfThisClass).append(".").append(getterName).append(");")
+                                .append(System.lineSeparator());
+
+                        if (! attribute.getType().isPrimitive()) {
+                            fromIgnoreNull.append("}").append(System.lineSeparator());
+                        }
+                    }
+                    fromIgnoreNull.append("}").append(System.lineSeparator());
+                    fromIgnoreNull.append(System.lineSeparator()).append("return getThisBuilder();");
+                    abstractBuilder.addMethod()
+                            .setPublic()
+                            .setName("fromIgnoreNull")
+                            .setReturnType("B")
+                            .setBody(fromIgnoreNull.toString())
+                            .addParameter(Object.class, "object");
+
+
                     //and these exact three methods (if not inherited from parent):
                     if (extendsAnnotatedClass.isEmpty()) {
                         abstractBuilder.addMethod()
@@ -143,56 +215,11 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
 
                     //add the JavaDoc
                     JavaDocSource abstractBuilderJavaDoc = abstractBuilder.getJavaDoc();
-                    abstractBuilderJavaDoc.setText("Note: generated code. All changes will be undone on the next build as long as "
-                    + "the @GenerateBuilder annotation is present on the enclosing class.");
+                    abstractBuilderJavaDoc.setText(NOTE_GENERATED_CODE);
 
 
                     //--------------------------------------------------------------------------------------------
-
-                    //generate the inner class for the implementation of the abstract builder
-                    String concreteBuilderName = concreteBuilderName(javaClass.getName());
-                    if (javaClass.hasNestedType(concreteBuilderName)) {
-                        //remove so it can be regenerated - just to be sure all the properties are ok etc.
-                        javaClass.removeNestedType(javaClass.getNestedType(concreteBuilderName));
-                    }
-
-                    //generate the inner class for the concrete builder
-                    JavaClassSource concreteBuilder = javaClass.addNestedType(concreteBuilderClassTemplate(javaClass.getName()));
-
-                    String createdObjectAttributeName = decapitalize(javaClass.getName());
-                    concreteBuilder.addField()
-                            .setPrivate()
-                            .setName(createdObjectAttributeName)
-                            .setType(javaClass.getName())
-                            .setLiteralInitializer("new " + javaClass.getName() + "()");
-
-                    concreteBuilder.addMethod()
-                            .setPublic()
-                            .setName("build")
-                            .setReturnType(javaClass.getName())
-                            .setBody("return " + createdObjectAttributeName + ";")
-                            .addAnnotation(Override.class);
-
-                    concreteBuilder.addMethod()
-                            .setPublic()
-                            .setName("getThisBuilder")
-                            .setReturnType(concreteBuilderName)
-                            .setBody("return this;")
-                            .addAnnotation(Override.class);
-
-                    concreteBuilder.addMethod()
-                            .setPublic()
-                            .setName("getObj")
-                            .setReturnType(javaClass.getName())
-                            .setBody("return " + createdObjectAttributeName + ";")
-                            .addAnnotation(Override.class);
-
-                    //add the JavaDoc
-                    JavaDocSource concreteBuilderJavaDoc = concreteBuilder.getJavaDoc();
-                    concreteBuilderJavaDoc.setText("Note: generated code. All changes will be undone on the next build as long as "
-                            + "the @GenerateBuilder annotation is present on the enclosing class.");
-
-
+                    generateConcreteBuilder(javaClass);
 
                     try (BufferedWriter bw = new BufferedWriter(new FileWriter(classFile))) {
                         bw.write(Roaster.format(javaClass.toString()));
@@ -207,6 +234,52 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
         }
 
         return true;
+    }
+
+
+
+    private void generateConcreteBuilder(JavaClassSource javaClass) {
+        //generate the inner class for the implementation of the abstract builder
+        String concreteBuilderName = concreteBuilderName(javaClass.getName());
+        if (javaClass.hasNestedType(concreteBuilderName)) {
+            //remove so it can be regenerated - just to be sure all the properties are ok etc.
+            javaClass.removeNestedType(javaClass.getNestedType(concreteBuilderName));
+        }
+
+        //generate the inner class for the concrete builder
+        JavaClassSource concreteBuilder = javaClass.addNestedType(concreteBuilderClassTemplate(javaClass.getName()));
+
+        String createdObjectAttributeName = decapitalize(javaClass.getName());
+        concreteBuilder.addField()
+                .setPrivate()
+                .setName(createdObjectAttributeName)
+                .setType(javaClass.getName())
+                .setLiteralInitializer("new " + javaClass.getName() + "()");
+
+        concreteBuilder.addMethod()
+                .setPublic()
+                .setName("build")
+                .setReturnType(javaClass.getName())
+                .setBody("return " + createdObjectAttributeName + ";")
+                .addAnnotation(Override.class);
+
+        concreteBuilder.addMethod()
+                .setPublic()
+                .setName("getThisBuilder")
+                .setReturnType(concreteBuilderName)
+                .setBody("return this;")
+                .addAnnotation(Override.class);
+
+        concreteBuilder.addMethod()
+                .setPublic()
+                .setName("getObj")
+                .setReturnType(javaClass.getName())
+                .setBody("return " + createdObjectAttributeName + ";")
+                .addAnnotation(Override.class);
+
+        //add the JavaDoc
+        JavaDocSource concreteBuilderJavaDoc = concreteBuilder.getJavaDoc();
+        concreteBuilderJavaDoc.setText(NOTE_GENERATED_CODE);
     }
 
     private String capitalize(String attributeName) {

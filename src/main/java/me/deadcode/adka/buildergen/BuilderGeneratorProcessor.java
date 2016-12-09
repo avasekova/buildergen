@@ -5,6 +5,7 @@ import org.jboss.forge.roaster.Roaster;
 import org.jboss.forge.roaster.model.Type;
 import org.jboss.forge.roaster.model.source.FieldSource;
 import org.jboss.forge.roaster.model.source.JavaClassSource;
+import org.jboss.forge.roaster.model.source.JavaDocSource;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
@@ -140,6 +141,11 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                 .setReturnType("T");
                     }
 
+                    //add the JavaDoc
+                    JavaDocSource abstractBuilderJavaDoc = abstractBuilder.getJavaDoc();
+                    abstractBuilderJavaDoc.setText("Note: generated code. All changes will be undone on the next build as long as "
+                    + "the @GenerateBuilder annotation is present on the enclosing class.");
+
 
                     //--------------------------------------------------------------------------------------------
 
@@ -181,6 +187,10 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                             .setBody("return " + createdObjectAttributeName + ";")
                             .addAnnotation(Override.class);
 
+                    //add the JavaDoc
+                    JavaDocSource concreteBuilderJavaDoc = concreteBuilder.getJavaDoc();
+                    concreteBuilderJavaDoc.setText("Note: generated code. All changes will be undone on the next build as long as "
+                            + "the @GenerateBuilder annotation is present on the enclosing class.");
 
 
 

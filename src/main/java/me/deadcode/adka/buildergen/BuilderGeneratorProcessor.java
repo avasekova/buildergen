@@ -96,16 +96,26 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                 .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
                     }
 
-                    //for each attribute that is a Collection, add also a method for adding individual elements:
+                    //for each attribute that is a Collection, add also methods for adding elements:
                     for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
                         if (isCollection(attribute.getType())) {
                             abstractBuilder.addMethod()
                                     .setPublic()
                                     .setName("addTo" + capitalize(attribute.getName()))
                                     .setReturnType("B")
-                                    .setBody("getObj().get" + capitalize(attribute.getName()) + "().add(" + attribute.getName() + "Element" + ");" +
+                                    .setBody( //TODO instantiate the collection if null
+                                            "getObj().get" + capitalize(attribute.getName()) + "().add(" + attribute.getName() + "Element" + ");" +
                                             System.lineSeparator() + "return getThisBuilder();")
                                     .addParameter(getElementType(attribute.getType()), attribute.getName() + "Element");
+
+                            abstractBuilder.addMethod()
+                                    .setPublic()
+                                    .setName("addAllTo" + capitalize(attribute.getName()))
+                                    .setReturnType("B")
+                                    .setBody( //TODO instantiate the collection if null
+                                            "getObj().get" + capitalize(attribute.getName()) + "().addAll(" + attribute.getName() + ");" +
+                                            System.lineSeparator() + "return getThisBuilder();")
+                                    .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
                         }
                     }
 

@@ -24,8 +24,6 @@ import java.util.stream.Collectors;
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class BuilderGeneratorProcessor extends AbstractProcessor {
 
-    //TODO refactor, duplicate code etc.
-
     private static final String CONCRETE_BUILDER_NAME = "%sBuilder";
     private static final String ABSTRACT_BUILDER_NAME = "Abstract" + CONCRETE_BUILDER_NAME;
     private static final String EXTENDS_PARENT_CLASS_ABSTRACT_BUILDER = " extends " + ABSTRACT_BUILDER_NAME + "<T, B>";
@@ -89,10 +87,24 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                     JavaClassSource abstractBuilder = javaClass.addNestedType(
                             abstractBuilderClassTemplate(javaClass.getName(), extendsAnnotatedClass));
 
-                    //for each attribute of the parent class, add a setter in this form:
+                    String objectOfThisClass = decapitalize(javaClass.getName());
+                    StringBuilder from = new StringBuilder();
+                    StringBuilder fromIgnoreNull = new StringBuilder();
+
+                    if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
+                        from.append("super.from(object);").append(System.lineSeparator()).append(System.lineSeparator());
+                        fromIgnoreNull.append("super.fromIgnoreNull(object);").append(System.lineSeparator()).append(System.lineSeparator());
+                    }
+                    String instanceofCheckAndThenCast = "if (object instanceof " + javaClass.getName() + ") {" + System.lineSeparator() +
+                            javaClass.getName() + " " + objectOfThisClass + " = (" + javaClass.getName() + ") object;" + System.lineSeparator();
+                    from.append(instanceofCheckAndThenCast);
+                    fromIgnoreNull.append(instanceofCheckAndThenCast);
+                    //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
+
                     for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
                         String setterName = "set" + capitalize(attribute.getName()) + "(" + attribute.getName() + ")";
 
+                        //for each attribute of the parent class, add a setter in this form:
                         abstractBuilder.addMethod()
                                 .setPublic()
                                 .setName(attribute.getName())
@@ -100,10 +112,8 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                 .setBody("getObj()." + setterName + ";" + System.lineSeparator() +
                                         "return getThisBuilder();")
                                 .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
-                    }
 
-                    //for each attribute that is a Collection, add also methods for adding elements:
-                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
+                        //for each attribute that is a Collection, add also methods for adding elements
                         if (isCollection(attribute.getType())) {
                             abstractBuilder.addMethod()
                                     .setPublic()
@@ -111,7 +121,7 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                     .setReturnType("B")
                                     .setBody( //TODO instantiate the collection if null
                                             "getObj().get" + capitalize(attribute.getName()) + "().add(" + attribute.getName() + "Element" + ");" +
-                                            System.lineSeparator() + "return getThisBuilder();")
+                                                    System.lineSeparator() + "return getThisBuilder();")
                                     .addParameter(getElementType(attribute.getType()), attribute.getName() + "Element");
 
                             abstractBuilder.addMethod()
@@ -120,33 +130,35 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                     .setReturnType("B")
                                     .setBody( //TODO instantiate the collection if null
                                             "getObj().get" + capitalize(attribute.getName()) + "().addAll(" + attribute.getName() + ");" +
-                                            System.lineSeparator() + "return getThisBuilder();")
+                                                    System.lineSeparator() + "return getThisBuilder();")
                                     .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
                         }
-                    }
 
-                    //generate methods to set all values from an object of the type being built (or its [sub|super]type)
-                    String objectOfThisClass = decapitalize(javaClass.getName());
-                    StringBuilder from = new StringBuilder();
-                    if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
-                        from.append("super.from(object);").append(System.lineSeparator()).append(System.lineSeparator());
-                    }
-                    from.append("if (object instanceof ").append(javaClass.getName()).append(") {").append(System.lineSeparator())
-                            .append(javaClass.getName()).append(" ").append(objectOfThisClass).append(" = (")
-                            .append(javaClass.getName()).append(") object;").append(System.lineSeparator());
-                    //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
 
-                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) { //TODO refactor, use one for loop?
-                        //set all attributes individually
+                        //generate parts of methods to set all values from an object of the type being built (or its [sub|super]type)
                         String getterName = (attribute.getType().getSimpleName().toLowerCase().equals("boolean") ? "is" : "get") +
                                 capitalize(attribute.getName()) + "()";
+                        String setThisAttributeFromGivenObject = "getObj().set" + capitalize(attribute.getName()) + "(" +
+                                objectOfThisClass + "." + getterName + ");" + System.lineSeparator();
 
-                        from.append("getObj().set").append(capitalize(attribute.getName())).append("(")
-                                .append(objectOfThisClass).append(".").append(getterName).append(");")
-                                .append(System.lineSeparator());
+                        from.append(setThisAttributeFromGivenObject);
+
+                        //a very similar method, but ignoring null values
+                        if (! attribute.getType().isPrimitive()) {
+                            fromIgnoreNull.append("if (").append(objectOfThisClass).append(".").append(getterName)
+                                    .append(" != null) {").append(System.lineSeparator());
+                        }
+
+                        fromIgnoreNull.append(setThisAttributeFromGivenObject);
+
+                        if (! attribute.getType().isPrimitive()) {
+                            fromIgnoreNull.append("}").append(System.lineSeparator());
+                        }
+
                     }
-                    from.append("}").append(System.lineSeparator());
-                    from.append(System.lineSeparator()).append("return getThisBuilder();");
+
+                    from.append("}").append(System.lineSeparator())
+                            .append(System.lineSeparator()).append("return getThisBuilder();");
                     abstractBuilder.addMethod()
                             .setPublic()
                             .setName("from")
@@ -154,36 +166,8 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                             .setBody(from.toString())
                             .addParameter(Object.class, "object");
 
-                    //a very similar method, but ignoring null values  TODO de-duplicate
-                    StringBuilder fromIgnoreNull = new StringBuilder();
-                    if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
-                        fromIgnoreNull.append("super.fromIgnoreNull(object);").append(System.lineSeparator()).append(System.lineSeparator());
-                    }
-                    fromIgnoreNull.append("if (object instanceof ").append(javaClass.getName()).append(") {").append(System.lineSeparator())
-                            .append(javaClass.getName()).append(" ").append(objectOfThisClass).append(" = (")
-                            .append(javaClass.getName()).append(") object;").append(System.lineSeparator());
-                    //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
-
-                    for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
-                        //set all attributes individually
-                        String getterName = (attribute.getType().getSimpleName().toLowerCase().equals("boolean") ? "is" : "get") +
-                                capitalize(attribute.getName()) + "()";
-
-                        if (! attribute.getType().isPrimitive()) {
-                            fromIgnoreNull.append("if (").append(objectOfThisClass).append(".").append(getterName)
-                                    .append(" != null) {").append(System.lineSeparator());
-                        }
-
-                        fromIgnoreNull.append("getObj().set").append(capitalize(attribute.getName())).append("(")
-                                .append(objectOfThisClass).append(".").append(getterName).append(");")
-                                .append(System.lineSeparator());
-
-                        if (! attribute.getType().isPrimitive()) {
-                            fromIgnoreNull.append("}").append(System.lineSeparator());
-                        }
-                    }
-                    fromIgnoreNull.append("}").append(System.lineSeparator());
-                    fromIgnoreNull.append(System.lineSeparator()).append("return getThisBuilder();");
+                    fromIgnoreNull.append("}").append(System.lineSeparator())
+                            .append(System.lineSeparator()).append("return getThisBuilder();");
                     abstractBuilder.addMethod()
                             .setPublic()
                             .setName("fromIgnoreNull")

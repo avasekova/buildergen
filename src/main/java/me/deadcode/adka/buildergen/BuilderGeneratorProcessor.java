@@ -10,6 +10,7 @@ import org.jboss.forge.roaster.model.source.JavaDocSource;
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 import java.io.BufferedWriter;
@@ -17,6 +18,8 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -57,8 +60,41 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
             Set<String> annotatedClasses = roundEnv.getElementsAnnotatedWith(GenerateBuilder.class)
                     .stream().map(el -> ((TypeElement) el).getQualifiedName().toString()).collect(Collectors.toSet());
 
+            //hack to save the FQN for nested classes (later when getting types from Roaster, the enclosing class is not included in it)
+            Map<String, String> nestedClassesFullTypeToRoasterType = new HashMap<>();
+            for (Element el : roundEnv.getElementsAnnotatedWith(GenerateBuilder.class)) {
+                for (Element enclosed : el.getEnclosedElements()) {
+                    if ((enclosed.getKind() == ElementKind.ENUM) || (enclosed.getKind() == ElementKind.CLASS) ||
+                            (enclosed.getKind() == ElementKind.ANNOTATION_TYPE) || (enclosed.getKind() == ElementKind.INTERFACE)) {
+
+                        String fullName = ((TypeElement) enclosed).getQualifiedName().toString();
+
+                        String beginning = fullName.substring(0, fullName.lastIndexOf('.'));
+                        String nameAsReturnedByRoaster = beginning.substring(0, beginning.lastIndexOf('.') + 1) +
+                                fullName.substring(fullName.lastIndexOf('.') + 1);
+
+                        nestedClassesFullTypeToRoasterType.put(nameAsReturnedByRoaster, fullName);
+                    }
+                }
+            }
+
             //then process them one by one and only use this helper collection to find the parents
             for (Element c : roundEnv.getElementsAnnotatedWith(GenerateBuilder.class)) {
+                if (c.getEnclosingElement().getKind() != ElementKind.PACKAGE) {
+                    //this is not a top-level class but rather a nested class/enum, local or anonymous class; ignore for simplicity
+                    messager.printMessage(Diagnostic.Kind.MANDATORY_WARNING, "BuilderGenerator: Ignoring nested class/enum '" +
+                            ((TypeElement) c).getQualifiedName() + "'");
+                    continue;
+                }
+
+                if (c.getKind() == ElementKind.ENUM) {
+                    //ignore enums as well
+                    messager.printMessage(Diagnostic.Kind.MANDATORY_WARNING, "BuilderGenerator: Ignoring enum '" +
+                            ((TypeElement) c).getQualifiedName() + "'");
+                    continue;
+                }
+
+
                 TypeElement classs = (TypeElement) c;
 
                 String pathToClass = classs.getQualifiedName().toString().replace('.', File.separatorChar);
@@ -102,16 +138,32 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                     //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
 
                     for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
+                        //ignore static and final fields
+                        if (attribute.isStatic()) {
+                            messager.printMessage(Diagnostic.Kind.MANDATORY_WARNING, "BuilderGenerator: Ignoring static attribute '" +
+                                    attribute.getName() + "'");
+                            continue;
+                        }
+
+                        if (attribute.isFinal()) {
+                            messager.printMessage(Diagnostic.Kind.MANDATORY_WARNING, "BuilderGenerator: Ignoring final attribute '" +
+                                    attribute.getName() + "'");
+                            continue;
+                        }
+
+
                         String setterName = "set" + capitalize(attribute.getName()) + "(" + attribute.getName() + ")";
 
                         //for each attribute of the parent class, add a setter in this form:
+                        String attributeType = nestedClassesFullTypeToRoasterType.getOrDefault(attribute.getType().getQualifiedName(),
+                                attribute.getType().getQualifiedNameWithGenerics());
                         abstractBuilder.addMethod()
                                 .setPublic()
                                 .setName(attribute.getName())
                                 .setReturnType("B")
                                 .setBody("getObj()." + setterName + ";" + System.lineSeparator() +
                                         "return getThisBuilder();")
-                                .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
+                                .addParameter(attributeType, attribute.getName());
 
                         //for each attribute that is a Collection, add also methods for adding elements
                         if (isCollection(attribute.getType())) {

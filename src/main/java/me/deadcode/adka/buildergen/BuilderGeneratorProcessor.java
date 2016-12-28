@@ -13,14 +13,8 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.io.*;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @SupportedAnnotationTypes("me.deadcode.adka.buildergen.annotation.GenerateBuilder")
@@ -257,8 +251,11 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                     //--------------------------------------------------------------------------------------------
                     generateConcreteBuilder(javaClass);
 
-                    try (BufferedWriter bw = new BufferedWriter(new FileWriter(classFile))) {
-                        bw.write(Roaster.format(javaClass.toString()));
+                    try (BufferedWriter bw = new BufferedWriter(new FileWriter(classFile));
+                         InputStream is = BuilderGeneratorProcessor.class.getClassLoader().getResourceAsStream("options.properties")) {
+                        Properties formattingProperties = new Properties();
+                        formattingProperties.load(is);
+                        bw.write(Roaster.format(formattingProperties, javaClass.toString()));
                     }
 
                 } catch (IOException e) {

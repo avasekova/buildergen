@@ -17,6 +17,9 @@ import java.io.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static java.lang.System.lineSeparator;
+import static me.deadcode.adka.buildergen.JavaElements.*;
+
 @SupportedAnnotationTypes("me.deadcode.adka.buildergen.annotation.GenerateBuilder")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class BuilderGeneratorProcessor extends AbstractProcessor {
@@ -35,6 +38,18 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
 
     private static final String CLASSES_PATH_PREFIX = "src" + File.separator + "main" + File.separator + "java" + File.separator;
     private static final String DOT_JAVA = ".java";
+
+    private static final String GET_OBJ = "getObj";
+    private static final String GET_OBJ__ = GET_OBJ + "()";
+    private static final String BUILD = "build";
+    private static final String GET_THIS_BUILDER = "getThisBuilder";
+    private static final String GET_THIS_BUILDER__ = GET_THIS_BUILDER + "()";
+    private static final String FROM = "from";
+    private static final String FROM_IGNORE_NULL = "fromIgnoreNull";
+    private static final String ADD_TO = "addTo";
+    private static final String ADD_ALL_TO = "addAllTo";
+    private static final String ELEMENT = "Element";
+    private static final String OBJECT = "object";
 
     private Messager messager;
 
@@ -122,14 +137,12 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                     StringBuilder fromIgnoreNull = new StringBuilder();
 
                     if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
-                        from.append("super.from(object);").append(System.lineSeparator()).append(System.lineSeparator());
-                        fromIgnoreNull.append("super.fromIgnoreNull(object);").append(System.lineSeparator()).append(System.lineSeparator());
+                        from.append(_super() + "." + _from(OBJECT)).append(lineSeparator()).append(lineSeparator());
+                        fromIgnoreNull.append(_super() + "." + _fromIgnoreNull(OBJECT)).append(lineSeparator()).append(lineSeparator());
                     }
-                    String instanceofCheckAndThenCast = "if (object instanceof " + javaClass.getName() + ") {" + System.lineSeparator() +
-                            javaClass.getName() + " " + objectOfThisClass + " = (" + javaClass.getName() + ") object;" + System.lineSeparator();
-                    from.append(instanceofCheckAndThenCast);
-                    fromIgnoreNull.append(instanceofCheckAndThenCast);
-                    //TODO functions for building blocks of the generated code, e.g. IF, cast, ...
+
+                    StringBuilder insideFrom = new StringBuilder();
+                    StringBuilder insideFromIgnoreNull = new StringBuilder();
 
                     for (FieldSource<JavaClassSource> attribute : javaClass.getFields()) {
                         //ignore static and final fields
@@ -146,7 +159,7 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                         }
 
 
-                        String setterName = "set" + capitalize(attribute.getName()) + "(" + attribute.getName() + ")";
+                        String setterName = _set(attribute.getName());
 
                         //for each attribute of the parent class, add a setter in this form:
                         String attributeType = nestedClassesFullTypeToRoasterType.getOrDefault(attribute.getType().getQualifiedName(),
@@ -155,71 +168,69 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                                 .setPublic()
                                 .setName(attribute.getName())
                                 .setReturnType("B")
-                                .setBody("getObj()." + setterName + ";" + System.lineSeparator() +
-                                        "return getThisBuilder();")
+                                .setBody(GET_OBJ__ + "." + setterName + _return(GET_THIS_BUILDER__))
                                 .addParameter(attributeType, attribute.getName());
 
                         //for each attribute that is a Collection, add also methods for adding elements
                         if (isCollection(attribute.getType())) {
                             abstractBuilder.addMethod()
                                     .setPublic()
-                                    .setName("addTo" + capitalize(attribute.getName()))
+                                    .setName(ADD_TO + capitalize(attribute.getName()))
                                     .setReturnType("B")
                                     .setBody( //TODO instantiate the collection if null
-                                            "getObj().get" + capitalize(attribute.getName()) + "().add(" + attribute.getName() + "Element" + ");" +
-                                                    System.lineSeparator() + "return getThisBuilder();")
-                                    .addParameter(getElementType(attribute.getType()), attribute.getName() + "Element");
+                                            GET_OBJ__ + "." + _get(attribute.getName()) + "." + _add(attribute.getName() +
+                                                    ELEMENT) + lineSeparator() + _return(GET_THIS_BUILDER__))
+                                    .addParameter(getElementType(attribute.getType()), attribute.getName() + ELEMENT);
 
                             abstractBuilder.addMethod()
                                     .setPublic()
-                                    .setName("addAllTo" + capitalize(attribute.getName()))
+                                    .setName(ADD_ALL_TO + capitalize(attribute.getName()))
                                     .setReturnType("B")
                                     .setBody( //TODO instantiate the collection if null
-                                            "getObj().get" + capitalize(attribute.getName()) + "().addAll(" + attribute.getName() + ");" +
-                                                    System.lineSeparator() + "return getThisBuilder();")
+                                            GET_OBJ__ + "." + _get(attribute.getName()) + "." + _addAll(attribute.getName()) +
+                                                    lineSeparator() + _return(GET_THIS_BUILDER__))
                                     .addParameter(attribute.getType().getQualifiedNameWithGenerics(), attribute.getName());
                         }
 
 
                         //generate parts of methods to set all values from an object of the type being built (or its [sub|super]type)
-                        String getterName = (attribute.getType().getSimpleName().toLowerCase().equals("boolean") ? "is" : "get") +
-                                capitalize(attribute.getName()) + "()";
-                        String setThisAttributeFromGivenObject = "getObj().set" + capitalize(attribute.getName()) + "(" +
-                                objectOfThisClass + "." + getterName + ");" + System.lineSeparator();
+                        String setThisAttributeFromGivenObject = GET_OBJ__ + "." + _set(attribute.getName(),
+                                objectOfThisClass + "." + _get(attribute));
 
-                        from.append(setThisAttributeFromGivenObject);
+                        insideFrom.append(setThisAttributeFromGivenObject);
 
                         //a very similar method, but ignoring null values
                         if (! attribute.getType().isPrimitive()) {
-                            fromIgnoreNull.append("if (").append(objectOfThisClass).append(".").append(getterName)
-                                    .append(" != null) {").append(System.lineSeparator());
+                            insideFromIgnoreNull.append(_if(_notNull(objectOfThisClass + "." + _get(attribute)), setThisAttributeFromGivenObject));
+                        } else {
+                            insideFromIgnoreNull.append(setThisAttributeFromGivenObject);
                         }
-
-                        fromIgnoreNull.append(setThisAttributeFromGivenObject);
-
-                        if (! attribute.getType().isPrimitive()) {
-                            fromIgnoreNull.append("}").append(System.lineSeparator());
-                        }
-
                     }
 
-                    from.append("}").append(System.lineSeparator())
-                            .append(System.lineSeparator()).append("return getThisBuilder();");
+
+                    from.append(_if(_instanceof(OBJECT, javaClass.getName()),
+                            javaClass.getName() + " " + objectOfThisClass + " = " + _cast(OBJECT, javaClass.getName()) + ";" +
+                                    insideFrom));
+                    fromIgnoreNull.append(_if(_instanceof(OBJECT, javaClass.getName()),
+                            javaClass.getName() + " " + objectOfThisClass + " = " + _cast(OBJECT, javaClass.getName()) + ";" +
+                                    insideFromIgnoreNull));
+
+
+                    from.append(lineSeparator()).append(_return(GET_THIS_BUILDER__));
                     abstractBuilder.addMethod()
                             .setPublic()
-                            .setName("from")
+                            .setName(FROM)
                             .setReturnType("B")
                             .setBody(from.toString())
-                            .addParameter(Object.class, "object");
+                            .addParameter(Object.class, OBJECT);
 
-                    fromIgnoreNull.append("}").append(System.lineSeparator())
-                            .append(System.lineSeparator()).append("return getThisBuilder();");
+                    fromIgnoreNull.append(lineSeparator()).append(_return(GET_THIS_BUILDER__));
                     abstractBuilder.addMethod()
                             .setPublic()
-                            .setName("fromIgnoreNull")
+                            .setName(FROM_IGNORE_NULL)
                             .setReturnType("B")
                             .setBody(fromIgnoreNull.toString())
-                            .addParameter(Object.class, "object");
+                            .addParameter(Object.class, OBJECT);
 
 
                     //and these exact three methods (if not inherited from parent):
@@ -227,19 +238,19 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                         abstractBuilder.addMethod()
                                 .setPublic()
                                 .setAbstract(true)
-                                .setName("build")
+                                .setName(BUILD)
                                 .setReturnType("T");
 
                         abstractBuilder.addMethod()
                                 .setPublic()
                                 .setAbstract(true)
-                                .setName("getThisBuilder")
+                                .setName(GET_THIS_BUILDER)
                                 .setReturnType("B");
 
                         abstractBuilder.addMethod()
                                 .setPublic()
                                 .setAbstract(true)
-                                .setName("getObj")
+                                .setName(GET_OBJ)
                                 .setReturnType("T");
                     }
 
@@ -262,7 +273,7 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                     messager.printMessage(Diagnostic.Kind.ERROR, e.toString());
                 }
             }
-        } else {
+
             firstRound = false;
         }
 
@@ -287,36 +298,32 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                 .setPrivate()
                 .setName(createdObjectAttributeName)
                 .setType(javaClass.getName())
-                .setLiteralInitializer("new " + javaClass.getName() + "()");
+                .setLiteralInitializer(_new(javaClass.getName()));
 
         concreteBuilder.addMethod()
                 .setPublic()
-                .setName("build")
+                .setName(BUILD)
                 .setReturnType(javaClass.getName())
-                .setBody("return " + createdObjectAttributeName + ";")
+                .setBody(_return(createdObjectAttributeName))
                 .addAnnotation(Override.class);
 
         concreteBuilder.addMethod()
                 .setPublic()
-                .setName("getThisBuilder")
+                .setName(GET_THIS_BUILDER)
                 .setReturnType(concreteBuilderName)
-                .setBody("return this;")
+                .setBody(_return(_this()))
                 .addAnnotation(Override.class);
 
         concreteBuilder.addMethod()
                 .setPublic()
-                .setName("getObj")
+                .setName(GET_OBJ)
                 .setReturnType(javaClass.getName())
-                .setBody("return " + createdObjectAttributeName + ";")
+                .setBody(_return(createdObjectAttributeName))
                 .addAnnotation(Override.class);
 
         //add the JavaDoc
         JavaDocSource concreteBuilderJavaDoc = concreteBuilder.getJavaDoc();
         concreteBuilderJavaDoc.setText(NOTE_GENERATED_CODE);
-    }
-
-    private String capitalize(String attributeName) {
-        return attributeName.substring(0,1).toUpperCase() + (attributeName.length() == 1 ? "" : attributeName.substring(1));
     }
 
     private String decapitalize(String className) {
@@ -351,6 +358,14 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
     private String getElementType(Type<JavaClassSource> type) {
         return type.getTypeArguments().isEmpty() ? Object.class.getCanonicalName()
                 : type.getTypeArguments().get(0).getQualifiedNameWithGenerics();
+    }
+
+    private static String _from(String object) {
+        return FROM + "(" + object + ");";
+    }
+
+    private static String _fromIgnoreNull(String object) {
+        return FROM_IGNORE_NULL + "(" + object + ");";
     }
 
 }

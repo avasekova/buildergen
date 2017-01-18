@@ -33,7 +33,7 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
     private static final String ABSTRACT_BUILDER_CLASS_TEMPLATE = "public static abstract class " + ABSTRACT_BUILDER_NAME +
             "<T extends %s, B extends " + ABSTRACT_BUILDER_NAME + "<T, B>>%s { }";
 
-    public static final String NOTE_GENERATED_CODE = "Note: generated code. All changes will be undone on the next build " +
+    private static final String NOTE_GENERATED_CODE = "Note: generated code. All changes will be undone on the next build " +
             "as long as the enclosing class is annotated with @GenerateBuilder.";
 
     private static final String CLASSES_PATH_PREFIX = "src" + File.separator + "main" + File.separator + "java" + File.separator;
@@ -137,8 +137,9 @@ public class BuilderGeneratorProcessor extends AbstractProcessor {
                     StringBuilder fromIgnoreNull = new StringBuilder();
 
                     if (! extendsAnnotatedClass.isEmpty()) { //if it has a parent
-                        from.append(_super() + "." + _from(OBJECT)).append(lineSeparator()).append(lineSeparator());
-                        fromIgnoreNull.append(_super() + "." + _fromIgnoreNull(OBJECT)).append(lineSeparator()).append(lineSeparator());
+                        from.append(_super()).append(".").append(_from(OBJECT)).append(lineSeparator()).append(lineSeparator());
+                        fromIgnoreNull.append(_super()).append(".").append(_fromIgnoreNull(OBJECT))
+                                .append(lineSeparator()).append(lineSeparator());
                     }
 
                     StringBuilder insideFrom = new StringBuilder();
